@@ -1,0 +1,371 @@
+---
+title: "STOR 390 Final: Novel Analysis"
+author: "Lynn Check"
+date: "2024-12-10"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(class)
+library(tidyverse)
+library(caret)
+library(dplyr)
+```
+
+
+```{r}
+# Creating a function that will read all of the .TXT files within the STOR 390 Final Project Folder
+read.TXT.EEG = function(subfolder, set_label) {
+  # Defining the main/base directory of where the folders are
+  base_directory = "~/Documents/STOR 390/Project/Final"
+  
+  # Filling in the rest of the path to the folder that is the directory of all the .TXT files
+  directory = file.path(base_directory, subfolder)
+  
+  # Listing each individual .TXT files in the directory
+  TXT_files = list.files(directory, pattern = "\\.TXT$", full.names = TRUE)
+  
+  # Debugging print statements of files that were found
+ # print(paste("Reading files from:", directory))
+#  print(TXT_files)
+  
+  # Checking to see if the files are found
+  if (length(TXT_files) == 0) {
+    stop("No .TXT files found in the specified directory!")
+  }
+  
+  # List where all the data from each of the files is going to be stored 
+  data_list = list()
+  
+  
+  for (file in TXT_files) {
+    seg_id = tools::file_path_sans_ext(basename(file))
+    voltage_values = scan(file, what = numeric(), quiet = TRUE)
+    
+    df = data.frame(
+      Segment_ID = seg_id,
+      State = set_label,
+      Time_Index = seq_along(voltage_values),  
+      Voltage = voltage_values
+    )
+    
+    data_list[[seg_id]] = df
+  }
+
+  combined_set = do.call(rbind, data_list)
+  return(combined_set)
+}
+
+# Creating a function that will read all of the .txt files within the STOR 390 Final Project Folder
+read.txt.EEG = function(subfolder, set_label) {
+  # Defining the main/base directory of where the folders are
+  base_directory = "~/Documents/STOR 390/Project/Final"
+  
+  # Filling in the rest of the path to the folder that is the directory of all the .txt files
+  directory = file.path(base_directory, subfolder)
+  
+  # Listing each individual .txt files in the directory
+  txt_files = list.files(directory, pattern = "\\.txt$", full.names = TRUE)
+  
+  # Debugging print statements of files that were found
+ # print(paste("Reading files from:", directory))
+ # print(txt_files)
+  
+  # Checking to see if the files are found
+  if (length(txt_files) == 0) {
+    stop("No .txt files found in the specified directory!")
+  }
+  
+  # List where all the data from each of the files is going to be stored 
+  data_list = list()
+ 
+  for (file in txt_files) {
+    seg_id = tools::file_path_sans_ext(basename(file))
+    voltage_values = scan(file, what = numeric(), quiet = TRUE)
+    
+    df = data.frame(
+      Segment_ID = seg_id,
+      State = set_label,
+      Time_Index = seq_along(voltage_values), 
+      Voltage = voltage_values
+    )
+    
+    data_list[[seg_id]] = df
+  }
+  
+  combined_set = do.call(rbind, data_list)
+  return(combined_set)
+}
+
+```
+
+
+```{r}
+# Read Normal Region EEG - denoted as Set C
+setC = read.TXT.EEG("Normal Region EEG", "Normal")
+
+# Read Epileptogenic Region EEG - denoted as Set D
+setD = read.txt.EEG("Epileptogenic Region EEG", "Preseizure")
+
+# Read Seizure EEG - denoted as Set E
+#setE = read.txt.EEG("Seizure EEG", "Seizure")
+
+# Combine all sets into one data frame
+merged_data = rbind(setC, setD)
+
+# Save and export the merged EEG file
+write.csv(merged_data, file = "~/Documents/STOR 390/Project/Final/merged_eeg_data.csv", row.names = FALSE)
+
+```
+
+```{r}
+head(merged_data)
+```
+
+```{r}
+# Cleaning and Extracting the features that will be used 
+library(tidyverse)
+merged_data_features = as.data.frame(merged_data %>% # required because group_by will change it to a tibble 
+  mutate(State = as.factor(State)) %>%
+  group_by(Segment_ID, State) %>%
+  summarize( 
+    Variance = var(Voltage), 
+    Mean = mean(Voltage), 
+    STL_max = max(diff(Voltage)), 
+    Min = min(Voltage), 
+    Max = max(Voltage)))
+merged_data_features # Should have a total of 300 observations/rows
+  
+```
+
+```{r}
+euclidean_distance = function(x, y) {
+  sqrt(sum((x - y)^2))
+}
+
+t_statistical_index = function(x, y) {
+  t.test(x, y)$statistic
+}
+
+dtw_distance = function(x, y) {
+  print(paste0("This is x: "))
+  print(y)
+  print(paste0("This is y: "))
+  print(x)
+  dtw::dtw(x, y)$distance
+}
+
+k_simulations_euc_5 = as.data.frame(matrix(nrow = 6, ncol=4))
+names(k_simulations_euc_5) = c("Avg_Accuracy", "Avg_Specificity", "Avg_Sensitivity", "k")
+i=1
+
+# For loop for n = 5
+for(k in c(3,5,7,9,11,13)) {
+  set.seed(42)
+  # Three fold cross validation
+  n_folds = 5
+  folds = sample(1:n_folds, size = nrow(merged_data_features), replace = TRUE)
+  
+  # Forming the Sensitivity and Specficity functions 
+  sens = function(table) {
+    tp = table[2,2]
+    fn = table[1,2]
+    return (tp/(tp+fn))
+  }
+  spec = function(table) {
+    tn = table[1,1]
+    fp = table[2,1]
+    return (tn/(tn+fp))
+  }
+  # Creating the function accuracy to evaluate the model
+  accuracy = function(x){
+    sum(diag(x)/(sum(rowSums(x)))) * 100
+  }
+  
+  # Loop for cross-validation
+  results = vector("list", n_folds)
+  for (fold in 1:n_folds) {
+    train_data = merged_data_features[folds != fold, -1]  # Exclude Segment_ID
+    test_data = merged_data_features[folds == fold, -1]
+    
+    target_State = merged_data_features[folds != fold, "State"]
+    test_State = merged_data_features[folds == fold, "State"]
+    
+      # Apply KNN model
+    knn_predictions = knn(
+      train = train_data[, -1],  # Exclude the "State" column
+      test = test_data[, -1],
+      cl = target_State,
+      k = k
+    )
+    
+    sum_table = table(knn_predictions, test_State)
+    print(sum_table)
+    # Confusion matrix
+    confusion = confusionMatrix(as.factor(knn_predictions), as.factor(test_State))
+    
+    # Store metrics in the results list
+    results[[fold]] = list(
+      accuracy = confusion$overall["Accuracy"],
+      sensitivity = confusion$byClass["Sensitivity"],
+      specificity = confusion$byClass["Specificity"]
+    )
+    
+    # Placeholder for classification step
+  }
+  
+  # Extract metrics into a data frame
+  summary_table_5 = data.frame(
+    Fold = 1:n_folds,
+    Accuracy = sapply(results, function(res) res$accuracy),
+    Sensitivity = sapply(results, function(res) res$sensitivity),
+    Specificity = sapply(results, function(res) res$specificity)
+  )
+  
+  # Print the summary table
+  #print(summary_table_3)
+  
+  # Calculate averages across folds
+  average_metrics_5 = summary_table_5 %>%
+    summarize(
+      Avg_Accuracy = mean(Accuracy, na.rm = TRUE),
+      Avg_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+      Avg_Specificity = mean(Specificity, na.rm = TRUE)
+    )
+  average_metrics_5$k = k
+  k_simulations_euc_5[i,] = average_metrics_5[1,]
+  i = i+1
+  #print(average_metrics_3)
+}
+k_simulations_euc_5
+```
+
+```{r}
+k_simulations_euc_3 = as.data.frame(matrix(nrow = 6, ncol=4))
+names(k_simulations_euc_3) = c("Avg_Accuracy", "Avg_Specificity", "Avg_Sensitivity", "k")
+i=1
+
+# For loop for n = 3
+for(k in c(3,5,7,9,11,13)) {
+  set.seed(42)
+  # Three fold cross validation
+  n_folds = 3
+  folds = sample(1:n_folds, size = nrow(merged_data_features), replace = TRUE)
+  
+  # Forming the Sensitivity and Specificity functions 
+  sens = function(table) {
+    tp = table[2,2]
+    fn = table[1,2]
+    return (tp/(tp+fn))
+  }
+  spec = function(table) {
+    tn = table[1,1]
+    fp = table[2,1]
+    return (tn/(tn+fp))
+  }
+  # Creating the function accuracy to evaluate the model
+  accuracy = function(x){
+    sum(diag(x)/(sum(rowSums(x)))) * 100
+  }
+  
+  # Loop for cross-validation
+  results = vector("list", n_folds)
+  for (fold in 1:n_folds) {
+    train_data = merged_data_features[folds != fold, -1]  
+    test_data = merged_data_features[folds == fold, -1]
+    
+    target_State = merged_data_features[folds != fold, "State"]
+    test_State = merged_data_features[folds == fold, "State"]
+    
+      # Apply KNN model
+    knn_predictions = knn(
+      train = train_data[, -1],  
+      test = test_data[, -1],
+      cl = target_State,
+      k = k
+    )
+    
+    sum_table = table(knn_predictions, test_State)
+    # Confusion matrix
+    confusion = confusionMatrix(as.factor(knn_predictions), as.factor(test_State))
+    
+    # Store metrics in the results list
+    results[[fold]] = list(
+      accuracy = confusion$overall["Accuracy"],
+      sensitivity = confusion$byClass["Sensitivity"],
+      specificity = confusion$byClass["Specificity"]
+    )
+    
+    # Placeholder for classification step
+  }
+  
+  # Extract metrics into a data frame
+  summary_table_3 = data.frame(
+    Fold = 1:n_folds,
+    Accuracy = sapply(results, function(res) res$accuracy),
+    Sensitivity = sapply(results, function(res) res$sensitivity),
+    Specificity = sapply(results, function(res) res$specificity)
+  )
+  
+  # Print the summary table
+  #print(summary_table_3)
+  
+  # Calculate averages across folds
+  average_metrics_3 = summary_table_3 %>%
+    summarize(
+      Avg_Accuracy = mean(Accuracy, na.rm = TRUE),
+      Avg_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+      Avg_Specificity = mean(Specificity, na.rm = TRUE)
+    )
+  average_metrics_3$k = k
+  k_simulations_euc_3[i,] = average_metrics_3[1,]
+  i = i+1
+  #print(average_metrics_3)
+}
+k_simulations_euc_3
+```
+
+```{r}
+summary_table_3
+summary_table_5
+```
+
+
+```{r}
+
+
+library(ggplot2)
+
+k_simulations_euc_5 = k_simulations_euc_5 %>%
+  mutate(adj_specificity =  1- Avg_Specificity)
+ggplot(k_simulations_euc_5, aes(x=adj_specificity, y=Avg_Sensitivity)) +
+  geom_point() + 
+  geom_text(aes(label=k), vjust= -0.8, size=3) +
+  labs(x = "1-Specificity", 
+       y = "Sensitivity")
+
+
+
+# Plotting the accuracy for each fold
+ggplot(summary_table_5, aes(x = Fold, y = Accuracy)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Accuracy Across Folds", x = "Fold", y = "Accuracy")
+
+# Sensitivity and Specificity
+ggplot(summary_table_5, aes(x = Fold)) +
+  geom_line(aes(y = Sensitivity, color = "Sensitivity")) +
+  geom_line(aes(y = Specificity, color = "Specificity")) +
+  labs(title = "Sensitivity and Specificity Across Folds", y = "Metric Value", x = "Fold") +
+  scale_color_manual(name = "Metrics", values = c("Sensitivity" = "blue", "Specificity" = "red"))
+
+
+```
+
+
+
+
+
+

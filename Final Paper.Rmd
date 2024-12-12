@@ -1,0 +1,451 @@
+---
+title: "Evaluation of Brainwave Classification Models and Ethical Implications"
+author: "Lynn Check"
+date: "2024/12/10"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+library(class)
+library(tidyverse)
+library(caret)
+library(dplyr)
+```
+
+
+```{r, echo=F}
+# Creating a function that will read all of the .TXT files within the STOR 390 Final Project Folder
+read.TXT.EEG = function(subfolder, set_label) {
+  # Defining the main/base directory of where the folders are
+  base_directory = "~/Documents/STOR 390/Project/Final"
+  
+  # Filling in the rest of the path to the folder that is the directory of all the .TXT files
+  directory = file.path(base_directory, subfolder)
+  
+  # Listing each individual .TXT files in the directory
+  TXT_files = list.files(directory, pattern = "\\.TXT$", full.names = TRUE)
+  
+  # Debugging print statements of files that were found
+ # print(paste("Reading files from:", directory))
+#  print(TXT_files)
+  
+  # Checking to see if the files are found
+  if (length(TXT_files) == 0) {
+    stop("No .TXT files found in the specified directory!")
+  }
+  
+  # List where all the data from each of the files is going to be stored 
+  data_list = list()
+  
+  
+  for (file in TXT_files) {
+    seg_id = tools::file_path_sans_ext(basename(file))
+    voltage_values = scan(file, what = numeric(), quiet = TRUE)
+    
+    df = data.frame(
+      Segment_ID = seg_id,
+      State = set_label,
+      Time_Index = seq_along(voltage_values),  
+      Voltage = voltage_values
+    )
+    
+    data_list[[seg_id]] = df
+  }
+
+  combined_set = do.call(rbind, data_list)
+  return(combined_set)
+}
+
+# Creating a function that will read all of the .txt files within the STOR 390 Final Project Folder
+read.txt.EEG = function(subfolder, set_label) {
+  # Defining the main/base directory of where the folders are
+  base_directory = "~/Documents/STOR 390/Project/Final"
+  
+  # Filling in the rest of the path to the folder that is the directory of all the .txt files
+  directory = file.path(base_directory, subfolder)
+  
+  # Listing each individual .txt files in the directory
+  txt_files = list.files(directory, pattern = "\\.txt$", full.names = TRUE)
+  
+  # Debugging print statements of files that were found
+ # print(paste("Reading files from:", directory))
+ # print(txt_files)
+  
+  # Checking to see if the files are found
+  if (length(txt_files) == 0) {
+    stop("No .txt files found in the specified directory!")
+  }
+  
+  # List where all the data from each of the files is going to be stored 
+  data_list = list()
+ 
+  for (file in txt_files) {
+    seg_id = tools::file_path_sans_ext(basename(file))
+    voltage_values = scan(file, what = numeric(), quiet = TRUE)
+    
+    df = data.frame(
+      Segment_ID = seg_id,
+      State = set_label,
+      Time_Index = seq_along(voltage_values), 
+      Voltage = voltage_values
+    )
+    
+    data_list[[seg_id]] = df
+  }
+  
+  combined_set = do.call(rbind, data_list)
+  return(combined_set)
+}
+
+```
+
+
+```{r, echo=F}
+# Read Normal Region EEG - denoted as Set C
+setC = read.TXT.EEG("Normal Region EEG", "Normal")
+
+# Read Epileptogenic Region EEG - denoted as Set D
+setD = read.txt.EEG("Epileptogenic Region EEG", "Preseizure")
+
+# Read Seizure EEG - denoted as Set E
+#setE = read.txt.EEG("Seizure EEG", "Seizure")
+
+# Combine all sets into one data frame
+merged_data = rbind(setC, setD)
+
+# Save and export the merged EEG file
+write.csv(merged_data, file = "~/Documents/STOR 390/Project/Final/merged_eeg_data.csv", row.names = FALSE)
+
+```
+
+```{r, echo=F}
+#head(merged_data)
+```
+
+```{r, echo=F}
+# Cleaning and Extracting the features that will be used 
+library(tidyverse)
+merged_data_features = as.data.frame(merged_data %>% # required because group_by will change it to a tibble 
+  mutate(State = as.factor(State)) %>%
+  group_by(Segment_ID, State) %>%
+  summarize( 
+    Variance = var(Voltage), 
+    Mean = mean(Voltage), 
+    STL_max = max(diff(Voltage)), 
+    Min = min(Voltage), 
+    Max = max(Voltage)))
+#merged_data_features # Should have a total of 300 observations/rows
+  
+```
+
+# Introduction
+Without warning, you lose control of your body. Twitching. Convulsing. Blacked out. It could be for a few seconds or a few minutes. The human brain is complicated and operates based on electromagnetic waves. Abnormal brain activities can trigger seizures which can put one’s life in danger. According to the World Helath Organization, around 50 million people suffer from epilepsy, making it the most common neurological disorder worldwide. Within the United States alone, 3.4 million people live with active epilepsy, and an estimated one out of 26 people will develop it at some point in their life. 
+
+Seizures can occur at any moment, often without warning. In many cases, the circumstances in which the epileptic episode occurs endanger the individual rather than the seizure itself. For example, it could happen when an individual is walking down the stairs or driving a car, all of which are situations that can lead to injury or even death. It can happen while the individual is asleep where one in 1,000 epileptic individuals die annually from sudden unexpected death in epilepsy (SUDEP) due to uncontrolled seizures. Not only can epilepsy impact the individual’s physical health but also mental and emotional, as well as the overall quality of life. Therefore, advancement in technology offers hope to these individuals and their families. Researchers have employed machine learning and data-driven approaches to address the unpredictable nature of seizures. Dr. Wanpracha A. Chaovalitwongse, Ph.D student Ya-Ju Fan, and Dr. Rajesh C. Sachdeo’s research “On the Time Series K-Nearest Neighbor Classification of Abnormal Brain Activity” investigates the use of electroencephalogram (EEG) data to predict and classify abnormal brain activities by integrating signaling processing techniques and the k-nearest neighbor algorithm to detect subtle brain wave patterns that serve as indicators of seizures, focusing on the “normal” and “pre-seizure” states of the brain. This paper evaluates their methods and results through recreation of the process and considering the ethical implications of the study. Furthermore, the paper will address the limitations, moral considerations, and suggestions for future clinical research aiming to highlight the potential of utilizing machine learning to improve epileptic care. 
+
+# Analysis of Methods
+The research conducted by Dr. Wanpracha A. Chaovalitwongse, Ph.D student Ya-Ju Fan, and Dr. Rajesh C. Sachdeo has been peer-reviewed and published in the IEEE Transactions on Systems, Man, and Cybernetics. The authors aimed to formulate a predictive model capable of classifying abnormal brain activities, specifically at differentiating between normal and pre-seizure states from intracranial electroencephalogram (iEEG) data. Their methodology involved using advanced data mining and time series analysis techniques. These included k-nearest neighbor (KNN) classification, statistical feature extraction, and dimensionality reduction. 
+
+The researcher collected data from ten epileptic patients who underwent invasive monitoring. These data were divided into segments of EEG signal across 2 different states: normal and pre-seizure. The authors extracted the variance, mean, short-term Lyapunov exponents (STLmax), maximum and minimum values. Then, they utilized distance metrics such as the Euclidean distance, to train and validate the KNN classification model through threefold and fivefold cross validation techniques. I will be replicating their methodology, validating their findings, and critiquing the limitations and approach of their research concerning data representation, algorithmic generalizability, and ethical considerations. However, due to the nature of the research, the original EEG dataset was not made publicly available. Therefore, I had to use a different data known as the Bonn EEG Time Series which contained five different EEGs, two of which are intracranial EEGs that measured the normal and pre-seizure states of the human brain. Furthermore, I will be proposing improvements and discussing implications for future research and clinical applications.
+
+## Novel Analysis
+Sets C and D from the Bonn EEGs Time Series dataset were merged to become one and used to carry out the replication of Dr. Chaovalitwongse and his colleagues’ research. Set C of the set contained EEG recordings from normal brain regions which represented the baseline to the “normal” state while set D contained EEG recordings from regions with epileptogenic activities, representing the “pre-seizure” state. The primary goal of the original research paper was to classify normal and pre-seizure states to help with the early prediction of seizures. By merging sets C and D, I am focusing on the same classification task that was outlined since it mirrors the original, making it a suitable proxy. Furthermore, these subsets from the Bonn dataset provide multiple recordings of each state. Each set contains 100 observations and within each observation, there are 4096 samples. This is ideal, allowing for a sufficient split into training and testing sets. It is also structured in a way that can be grouped and computed statistical features such as variance and STLmax. The Bonn data are all numerical EEG recordings. Therefore, the similarity measure and the KNN algorithm can be executed. However, it is important to note that the Bonn dataset did not arrange its data based on each patient like Dr. Chaovalitwongse and his colleagues. The Bonn dataset was organized by the state in which the epileptic patient’s brainwaves were indicated. Therefore, my replication will not be able to measure the performance characteristic per patient but rather as a whole. 
+
+Using R programming language, I will be following the process of the authors’ described methodology. For the training and testing sets, the data will be split using the n-fold cross validation technique to minimize bias as proposed by the authors. Then, utilizing a for loop, I will use the knn function to run the KNN classification algorithm and calculate the accuracy, sensitivity, and specificity of each model with a different k-value for k equals 3, 5, 7, 9, 11, and 13. When the authors did this, they took their results and put them into a confusion matrix comparing the knn predicted values of Abnormal (Preseziure) and Normal (No Seizure) with the actual results from their data, as shown in Table 1. To replicate this, I took the labels from my testing set and created a confusion matrix with the knn predictions to also visualize the overall reliability of the model and see the different false positive/negative rates and true positive/negative rates. This process was done for each k value as aforementioned, both for a three-fold (n=3) cross-validation and a five-fold (n=5) cross-validation approach, creating 12 matrices total (an example of what one looks like is in Table 2).
+
+**Table 1**:Evaluation concept of classification results where “abnormal” is “pre-seizure” state (Chaovalitwongse et al.)	
+
+
+
+![Stat_Confusion_Matrix](/Users/lynncheck/Documents/STOR 390/Project/Final/Research_Table.png)
+
+**Table 2**: One of the 12 KNN Classification result matrices (Check)
+
+
+
+![Confusion_Matrix](/Users/lynncheck/Documents/STOR 390/Project/Final/Confusion_Matrix.png)
+
+To produce a similar comparison table as shown in Table 3 of the accuracy, specificity, and sensitivity statistics as the one the authors produced, I computed the accuracy, specificity, and sensitivity statistics for each one and computed the average of those statistics across each fold’s iteration. Once this was done, I appended the values of these average statistics to a data frame. As shown in (Tables 4 & 5), each row in this new data frame contained these statistics for every k value in that specific cross-validation approach. Specificity and sensitivity are two common medical classification measures. Specificity indicates the probability of the EEG being accurately classified as normal while sensitivity refers to the probability of the model classifying the EEG as pre-seizure state. 
+
+
+**Table 3**: Performance Characteristics (Chaovalitwongse et al.)
+
+
+
+
+![Patient_Table](/Users/lynncheck/Documents/STOR 390/Project/Final/Research_Patient_Table.png)
+
+
+**Table 4**: Average Performance Characteristics for n = 3 (Check)
+
+
+
+```{r, echo=F}
+euclidean_distance = function(x, y) {
+  sqrt(sum((x - y)^2))
+}
+
+t_statistical_index = function(x, y) {
+  t.test(x, y)$statistic
+}
+
+dtw_distance = function(x, y) {
+  print(paste0("This is x: "))
+  print(y)
+  print(paste0("This is y: "))
+  print(x)
+  dtw::dtw(x, y)$distance
+}
+
+k_simulations_euc_5 = as.data.frame(matrix(nrow = 6, ncol=4))
+names(k_simulations_euc_5) = c("Avg_Accuracy", "Avg_Specificity", "Avg_Sensitivity", "k")
+i=1
+
+# For loop for n = 5
+for(k in c(3,5,7,9,11,13)) {
+  set.seed(42)
+  # Three fold cross validation
+  n_folds = 5
+  folds = sample(1:n_folds, size = nrow(merged_data_features), replace = TRUE)
+  
+  # Forming the Sensitivity and Specficity functions 
+  sens = function(table) {
+    tp = table[2,2]
+    fn = table[1,2]
+    return (tp/(tp+fn))
+  }
+  spec = function(table) {
+    tn = table[1,1]
+    fp = table[2,1]
+    return (tn/(tn+fp))
+  }
+  # Creating the function accuracy to evaluate the model
+  accuracy = function(x){
+    sum(diag(x)/(sum(rowSums(x)))) * 100
+  }
+  
+  # Loop for cross-validation
+  results = vector("list", n_folds)
+  for (fold in 1:n_folds) {
+    train_data = merged_data_features[folds != fold, -1]  # Exclude Segment_ID
+    test_data = merged_data_features[folds == fold, -1]
+    
+    target_State = merged_data_features[folds != fold, "State"]
+    test_State = merged_data_features[folds == fold, "State"]
+    
+      # Apply KNN model
+    knn_predictions = knn(
+      train = train_data[, -1],  # Exclude the "State" column
+      test = test_data[, -1],
+      cl = target_State,
+      k = k
+    )
+    
+    sum_table = table(knn_predictions, test_State)
+    # Confusion matrix
+    confusion = confusionMatrix(as.factor(knn_predictions), as.factor(test_State))
+    
+    # Store metrics in the results list
+    results[[fold]] = list(
+      accuracy = confusion$overall["Accuracy"],
+      sensitivity = confusion$byClass["Sensitivity"],
+      specificity = confusion$byClass["Specificity"]
+    )
+    
+    # Placeholder for classification step
+  }
+  
+  # Extract metrics into a data frame
+  summary_table_5 = data.frame(
+    Fold = 1:n_folds,
+    Accuracy = sapply(results, function(res) res$accuracy),
+    Sensitivity = sapply(results, function(res) res$sensitivity),
+    Specificity = sapply(results, function(res) res$specificity)
+  )
+  
+  # Print the summary table
+  #print(summary_table_3)
+  
+  # Calculate averages across folds
+  average_metrics_5 = summary_table_5 %>%
+    summarize(
+      Avg_Accuracy = mean(Accuracy, na.rm = TRUE),
+      Avg_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+      Avg_Specificity = mean(Specificity, na.rm = TRUE)
+    )
+  average_metrics_5$k = k
+  k_simulations_euc_5[i,] = average_metrics_5[1,]
+  i = i+1
+  #print(average_metrics_3)
+}
+k_simulations_euc_5
+```
+**Table 5**: Average Performance Characteristics for n = 5 (Check)
+
+
+
+```{r, echo=F}
+k_simulations_euc_3 = as.data.frame(matrix(nrow = 6, ncol=4))
+names(k_simulations_euc_3) = c("Avg_Accuracy", "Avg_Specificity", "Avg_Sensitivity", "k")
+i=1
+
+# For loop for n = 3
+for(k in c(3,5,7,9,11,13)) {
+  set.seed(42)
+  # Three fold cross validation
+  n_folds = 3
+  folds = sample(1:n_folds, size = nrow(merged_data_features), replace = TRUE)
+  
+  # Forming the Sensitivity and Specificity functions 
+  sens = function(table) {
+    tp = table[2,2]
+    fn = table[1,2]
+    return (tp/(tp+fn))
+  }
+  spec = function(table) {
+    tn = table[1,1]
+    fp = table[2,1]
+    return (tn/(tn+fp))
+  }
+  # Creating the function accuracy to evaluate the model
+  accuracy = function(x){
+    sum(diag(x)/(sum(rowSums(x)))) * 100
+  }
+  
+  # Loop for cross-validation
+  results = vector("list", n_folds)
+  for (fold in 1:n_folds) {
+    train_data = merged_data_features[folds != fold, -1]  
+    test_data = merged_data_features[folds == fold, -1]
+    
+    target_State = merged_data_features[folds != fold, "State"]
+    test_State = merged_data_features[folds == fold, "State"]
+    
+      # Apply KNN model
+    knn_predictions = knn(
+      train = train_data[, -1],  
+      test = test_data[, -1],
+      cl = target_State,
+      k = k
+    )
+    
+    sum_table = table(knn_predictions, test_State)
+    # Confusion matrix
+    confusion = confusionMatrix(as.factor(knn_predictions), as.factor(test_State))
+    
+    # Store metrics in the results list
+    results[[fold]] = list(
+      accuracy = confusion$overall["Accuracy"],
+      sensitivity = confusion$byClass["Sensitivity"],
+      specificity = confusion$byClass["Specificity"]
+    )
+    
+    # Placeholder for classification step
+  }
+  
+  # Extract metrics into a data frame
+  summary_table_3 = data.frame(
+    Fold = 1:n_folds,
+    Accuracy = sapply(results, function(res) res$accuracy),
+    Sensitivity = sapply(results, function(res) res$sensitivity),
+    Specificity = sapply(results, function(res) res$specificity)
+  )
+  
+  # Print the summary table
+  #print(summary_table_3)
+  
+  # Calculate averages across folds
+  average_metrics_3 = summary_table_3 %>%
+    summarize(
+      Avg_Accuracy = mean(Accuracy, na.rm = TRUE),
+      Avg_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+      Avg_Specificity = mean(Specificity, na.rm = TRUE)
+    )
+  average_metrics_3$k = k
+  k_simulations_euc_3[i,] = average_metrics_3[1,]
+  i = i+1
+  #print(average_metrics_3)
+}
+k_simulations_euc_3
+```
+
+```{r, echo=F}
+#summary_table_3
+#summary_table_5
+```
+Comparing the tables that I produced to the ones the author produced, the accuracy of their model indicates an average of 78% to 81% range for sensitivity and a 71% to 73% accuracy range for specificity which did not align with the average accuracy rate I found through replicating the analysis process. The study took the results for one patient, patient 10, and for each k-value, graphed the corresponding points with x being “1-specificity” and y being “sensitivity” shown in Figure 1. Both my approach and the study used the default distance algorithm of Euclidean distance to calculate the predictions from the knn approach as shown below. Figure 2 shows the results from my approach, which at first glance looks a lot more different for the unique values of k in comparison. The main thing to take note of is that the range of my sensitivity values is much smaller (ranging only from 42% to 50%, with most values being around 46% to 50%). Their study has their sensitivity values ranging from 75% to 95%, almost double the range of mine.
+
+**Figure 1**: ROC Plot for a single patient (Chaovalitwongse et al.)
+
+
+
+![Research_Graph](/Users/lynncheck/Documents/STOR 390/Project/Final/Research_Graph.png)
+
+**Figure 2**: Plot of Sensitivity and Specificity values for KNN Euclidean Distance (Check)
+
+
+
+```{r, echo=F}
+library(ggplot2)
+
+k_simulations_euc_5 = k_simulations_euc_5 %>%
+  mutate(adj_specificity =  1- Avg_Specificity)
+ggplot(k_simulations_euc_5, aes(x=adj_specificity, y=Avg_Sensitivity)) +
+  geom_point() + 
+  geom_text(aes(label=k), vjust= -0.8, size=3) +
+  labs(x = "1-Specificity", 
+       y = "Sensitivity")
+
+```
+There are a few limitations in what I could replicate, as I will mention further below, with the most notable one being that they have access to individual patient data, which I am unable to use due to HIPPA laws. As a result, the differences in the resulting visualization are apparent. However, this can also be attributed to the lack of variability that exists in the sample size of the data they use.
+
+## Critiques and Limitations
+The paper's goal is not to recreate the same results as the original research done by Dr. Chaovalitwongse and his peers but rather to take an intracranial EEG dataset run through the same process and observe the validity and accuracy of the model. It evaluates algorithmic generalizability. By doing so, a significant concern arose. As discussed earlier, the model proposed by the author is not as accurate as shown by their results when the model is used on a large dataset with multiple EEG readings and patients. Since the author ran the model patient by patient by collecting multiple EEG readings from each of their patients and then creating a sample per individual, their model is trained specifically for that patient. This is a major violation of the generalizability of the overall algorithm. 
+
+Initially, the lack of patient division, meaning understanding which EEG readings belonged to which patient, in the dataset that I used was seen as a limitation. However, the results revealed another aspect of the research approach. The dataset I used allowed for the algorithm to be trained on a wider variety of EEG readings. By doing so, the model that I trained was more generalizable than the one that was being presented in the paper. Furthermore, the dataset that I used had over 820,000 observations which is significantly more than what the research paper had (15300 observations). According to the FDA, there should be around 20 to 100 study participants in the study. However, there were only 10 patients in Dr. Chaovalitwongse and his colleagues’ research study. 
+
+# Analysis of Normative Consideration
+While the results of this research seem promising, albeit with some statistical concerns, it does come with significant ethical concerns. The research incorporates an invasive surgical procedure as patients’ brains are implanted with electrodes to collect relevant data. This approach raises serious ethical and moral concerns regarding the data collection and experiment itself. As stated by Immanuel Kant, from a deontological perspective this procedure challenges the principle of respecting an individual’s inherent dignity and autonomy. Kant’s ethical framework emphasizes that individuals must never be treated merely as a means to an end, but always as ends in themselves. In this context, even if the research promises substantial benefits in the advancement of neurological research, the invasiveness of how the data is collected could be seen as a violation of the participants’ autonomy and right to bodily integrity. This is especially concerning if the process of informing the participants of the procedure and getting their consent does not adequately address the potential risks and long-term consequences of electrode implantation.
+Furthermore, while the research aims to advance epilepsy treatment, the small sample size of 10 patients introduces another layer of complexity. A study with such a limited cohort may not accurately reflect the diversity of epileptic triggers or symptoms when it comes to the broader population. Concerns about algorithmic bias arise from this, as the machine learning model developed from this dataset may yield inaccurate or unreliable predictions when applied to different patient populations. This model, for example, is trained on data from a small sample size of patients. Thus, it may inadvertently marginalize those whose symptoms or neurological patterns deviate from the main group. This could be deemed as unjust as there is a lack of generalizability towards people who don’t fit the traits of this small sample of data, potentially undermining the ethical obligation to provide equitable care and representation to all patients.
+Furthermore, Intracranial EEG recordings involve highly sensitive neurological data, which can reveal intricate and confidential details about one’s brain activity. The way this data is collected, stored, and analyzed must adhere to strict ethical and legal procedures, to ensure that participants’ privacy is protected. If any of these were violated, concerns of unauthorized access and misuse of the data without the participants’ explicit consent become prevalent. It is crucial to prioritize the privacy of individuals, and in this case the privacy of their brain activity, over any gains that could come from this research. 
+There is also an ethical obligation to be transparent about how the data is handled and how the findings are interpreted. If the data is used for purposes beyond what is explicitly stated during the consent process, including being shared with an outside third party without keeping one anonymous, the participant’s trust and privacy are completely violated. This goes against what Kantian ethics states about the importance of truthfulness and respecting the agency of all individuals involved.
+
+# Conclusion
+## Impact of the Paper
+Dr. Wanpracha A. Chaovalitwongse, Ph.D student Ya-Ju Fan, and Dr. Rajesh C. Sachdeo’s research opened up the endless possibilities of incorporating machine learning techniques into the medical field. It built a foundation where other researchers can learn and improve on that can enhance patient health and safety. The research offered many techniques and characteristics that could be considered and used in other neurological research and clinical trials. The main impact of this paper is that they introduced significant contributions to the field of medical diagnostics and epilepsy management. It did so by laying the foundation for future advancements in predictive algorithms for neurological conditions that can assist medical healthcare professionals in developing preventative healthcare plans for their patients. Furthermore, the methodologies developed in the study can be extended to other areas of time-series classification, advancing broader applications in biomedical engineering and signal processing.
+
+## Future Implications and Suggestions 
+Dr. Chaovalitwongse and his team have opened the door and paved the way to a myriad of opportunities to integrate machine learning tactics into neurological research. From the results, I would suggest conducting the research on a larger scale with more patient volunteers and running the model with all the patients making up the entire dataset. By doing so, we can enhance the algorithmic generalizability of the algorithm itself. Furthermore, I believe scalp EEGs, a noninvasive method of measuring and collecting brain activity, is a data collecting method that should be consider because it raises the likelihood of patients participating in the research. There are a plethora of uncertainties that comes with invasive EEGs data collection which could deter patients from feeling comfortable to participate in. Therefore, the characteristics and variables that Dr. Chaovalitwongse and his team observed can serve as the information that other researchers use, collect, and calculate but changing the data collecting methodology. 
+
+<newpage>
+
+# References
+Andrzejak, R. G., Lehnertz, K., Mormann, F., Rieke, C., David, P., & Elger, C. E. (2001). Indications of nonlinear deterministic and finite-dimensional structures in time series of brain electrical activity: Dependence on recording region and Brain State. Physical Review E, 64(6). https://doi.org/10.1103/physreve.64.061907 
+
+Andrzejak, R. G., Lehnertz, K., Rieke, C., David, P., & Elger, C. E. (n.d.). EEG Data Download. UKB. https://www.ukbonn.de/epileptologie/arbeitsgruppen/ag-lehnertz-neurophysik/downloads/ 
+
+Chaovalitwongse, W. A., Fan, Y.-J., & Sachdeo, R. C. (2007). On the Time Series K-Nearest Neighbor Classification of Abnormal Brain Activity. IEEE Transactions on Systems, Man, and Cybernetics - Part A: Systems and Humans, 37(6), 1005–1016. https://doi.org/10.1109/tsmca.2007.897589 
+
+Commissioner, O. of the. (n.d.). Step 3: Clinical research. U.S. Food and Drug Administration.
+https://www.fda.gov/patients/drug-development-process/step-3-clinical-research#:
+~:text=Watch%20this%20video%20to%20learn%20about%20the%20three%20phases%20of%20c
+linical%20trials.&text=Study%20Participants%3A%2020%20to%20100,people%20with%20the%20disease%2Fcondition.&text=During%20Phase%201%20studies%2C%20researchers,normal%20volunteers%20(healthy%20people). 
+
+Hesdorffer, D. C., Logroscino, G., Benn, E. K. T., Katri, N., Cascino, G., & 
+Hauser, W. A. (2011). Estimating risk for developing epilepsy. Neurology, 76(1), 23–27. https://doi.org/10.1212/wnl.0b013e318204a36a 
+
+Sirven, J. I., Shafer, P. O., & Kanner, A. M. (n.d.). Facts about seizures and 
+epilepsy. Epilepsy Foundation. https://www.epilepsy.com/what-is-epilepsy/statistics#:~:text=Epilepsy%20is%20not
+%20a%20rare,Intellectual%20disability 
+
+World Health Organization. (2024, February 7). Epilepsy. World Health Organization. https://www.who.int/news-room/fact-sheets/detail/epilepsy 
+
+
+
+
+
+
