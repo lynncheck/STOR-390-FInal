@@ -9,7 +9,8 @@ This repository hosts the files for the STOR 390 Final Project.
 - **Dataset Folder**: Contains all the original .txt/.TXT files and a .csv file of all the data merged.
     - **Normal Region EEG**: Contains all the .TXT files with normal EEG values.
     - **Epileptogenic Region EEG**: Contains all the .txt files with pre-seizure EEG values.
-    - **Merged EEG Data**: Contains both normal and pre-seizure EEG values as a .csv file.
+
+- **Merged EEG Data**: Contains both normal and pre-seizure EEG values as a .csv file.
   
 - **Novel Analysis**: RMD and HTML files. Contains the R code that was used to clean and conduct the novel analysis part of the project, intending to recreate the authors' research process to compare and contrast results and evaluate the methodology. 
   
